@@ -12,7 +12,6 @@
   clojure.tools.namespace.find
   (:require [clojure.java.classpath :as classpath]
             [clojure.java.io :as io]
-            [clojure.set :as set]
             [clojure.tools.namespace.file :as file]
             [clojure.tools.namespace.parse :as parse])
   (:import (java.io File FileReader BufferedReader PushbackReader

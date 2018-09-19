@@ -12,6 +12,7 @@
   clojure.tools.namespace.dir
   (:require [clojure.tools.namespace.file :as file]
             [clojure.tools.namespace.find :as find]
+            [clojure.tools.namespace.parse :as parse]
             [clojure.tools.namespace.track :as track]
             [clojure.java.classpath :refer [classpath-directories]]
             [clojure.java.io :as io]
@@ -19,12 +20,94 @@
             [clojure.string :as string])
   (:import (java.io File) (java.util.regex Pattern)))
 
-(defn- find-files [dirs platform]
+(set! *warn-on-reflection* true)
+
+(def ^:private ^:dynamic *path-mismatch-dirs*
+  "Set of classpath directories found with extra source files whose
+  paths do not match their ns declarations. Used to print warnings and
+  filter out paths with non-canonical copies of source files, such as
+  .cljc files copied into resources/public."
+  nil)
+
+(defn- add-mismatch-dir [^File dir]
+  (when (thread-bound? #'*path-mismatch-dirs*)
+    (set! *path-mismatch-dirs* (conj *path-mismatch-dirs* dir))))
+
+(defn- remove-mismatch-dir [^File dir]
+  (when (thread-bound? #'*path-mismatch-dirs*)
+    (set! *path-mismatch-dirs* (disj *path-mismatch-dirs* dir))))
+
+(defn- relative
+  "Returns a java.io.File representing the path to file relative to
+  dir. Like java.nio.file.Path.relativize() but compatible with Java
+  1.6."
+  ^File [^File dir ^File file]
+  (loop [parts ()
+         ^File current file]
+    (cond
+      (nil? current)  nil
+      (= current dir) (apply io/file parts)
+      :else           (recur (conj parts (.getName current))
+                             (.getParentFile current)))))
+
+(defn- warn-path-mismatch [^File dir ^File file]
+  (let [relative-path (.getPath (relative dir file))
+        ns-name (second (file/read-file-ns-decl file))]
+    (binding [*err* *out*]
+      (println (str "tools.namespace: ignoring directory " (.getPath dir)
+                    "\n\tbecause the ns declaration " ns-name
+                    "\n\tdoes not match the path " relative-path)))))
+
+(defn- mismatch-path?
+  "True if the directory has already been identified as containing
+  files for which the ns declarations do not match the file paths, for
+  example .cljc files copied into resources/public. Prints
+  notification to *err*."
+  [^File dir]
+  (when (contains? *path-mismatch-dirs* dir)
+    true))
+
+(defn- path-matches-ns?
+  "True if the namespace declaration of file matches its path relative
+  to dir."
+  [^File dir ^File file]
+  (let [decl (file/read-file-ns-decl file)
+        ns (parse/name-from-ns-decl decl)
+        correct-path (str (.getPath dir)
+                          File/separator
+                          (-> (name ns)
+                              (string/replace "-" "_")
+                              (string/replace "." File/separator))) ]
+    (.startsWith (.getPath file) correct-path)))
+
+(defn- find-files
+  "Finds source files for platform in directory for which the path
+  matches the namespace declaration."
+  [dirs platform]
   (->> dirs
        (map io/file)
        (map #(.getCanonicalFile ^File %))
        (filter #(.exists ^File %))
-       (mapcat #(find/find-sources-in-dir % platform))
+       (mapcat (fn [dir]
+                 (let [sources (find/find-sources-in-dir dir platform)]
+                   (if (mismatch-path? dir)
+                     (if (every? #(path-matches-ns? dir %) sources)
+                       (do (binding [*err* *out*]
+                             (println (str "tools.namespace: directory " (.getPath ^File dir) " no longer contains mismatched"
+                                           "\n\tnamespace declarations, no longer ignoring the directory.")))
+                           (remove-mismatch-dir dir)
+                           sources)
+                       (do (binding [*err* *out*]
+                             (println "tools.namespace: ignoring directory" (.getPath ^File dir)))
+                           nil))
+                     (filter (fn [source]
+                               (if (path-matches-ns? dir source)
+                                 source
+                                 (do
+                                   (warn-path-mismatch dir source)
+                                   (add-mismatch-dir dir)
+                                   nil)))
+                             sources)))))
        (map #(.getCanonicalFile ^File %))))
 
 (defn- modified-files [tracker files]
@@ -76,6 +159,9 @@
   dirs is the collection of directories to scan, defaults to all
   directories on Clojure's classpath.
 
+  Ignores directories containing files for which the namespace
+  declaration does not match the path: prints a warning.
+
   Optional third argument is map of options:
 
     :platform  Either clj (default) or cljs, both defined in 
@@ -89,7 +175,10 @@
   ([tracker dirs] (scan-dirs tracker dirs nil))
   ([tracker dirs {:keys [platform add-all?] :as options}]
    (let [ds (or (seq dirs) (classpath-directories))]
-     (scan-files tracker (find-files ds platform) options))))
+     (binding [*path-mismatch-dirs* (::path-mismatch-dirs tracker #{})]
+       (-> tracker
+           (scan-files (find-files ds platform) options)
+           (assoc ::path-mismatch-dirs *path-mismatch-dirs*))))))
 
 (defn scan
   "DEPRECATED: replaced by scan-dirs.

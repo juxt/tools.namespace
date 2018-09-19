@@ -73,6 +73,14 @@
                    (list 'ns sym))]
      (create-file full-path (into [ns-decl] contents)))))
 
+(defn create-copy
+  "Copies source-file to target-file, creating parent directories as
+  needed. Returns target-file."
+  [source-file target-file]
+  (io/make-parents target-file)
+  (io/copy source-file target-file)
+  target-file)
+
 (defn same-files?
   "True if files-a and files-b contain the same canonical File's,
   regardless of order."

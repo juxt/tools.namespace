@@ -1,5 +1,6 @@
 (ns clojure.tools.namespace.dir-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.java.io :as io]
+            [clojure.test :refer [deftest is]]
             [clojure.tools.namespace.test-helpers :as help]
             [clojure.tools.namespace.dir :as dir])
   (:import
@@ -36,3 +37,17 @@
       (make-symbolic-link link dir)
       (is (= (::dir/files (dir/scan-dirs {} [dir]))
              (::dir/files (dir/scan-dirs {} [link])))))))
+
+(deftest t-ignore-invalid-ns-path
+  ;; example.one namespace is defined in cljc file and can be found
+  ;; at two different paths on the classpath, in other case
+  ;; the path doesn't match namespace.
+  (let [dir (help/create-temp-dir "t-invalid-ns-path")
+        main-clj (help/create-source dir 'example.main :clj '[example.one])
+        one-cljc (help/create-source dir 'example.one :cljc)
+        one-cljc-copy (help/create-copy
+                       one-cljc
+                       (io/file dir "public/js/out/example/one.cljc"))]
+    (is (help/same-files?
+         [main-clj one-cljc]
+         (::dir/files (dir/scan-dirs {} [dir]))))))
