@@ -73,12 +73,14 @@
   [^File dir ^File file]
   (let [decl (file/read-file-ns-decl file)
         ns (parse/name-from-ns-decl decl)
-        correct-path (str (.getPath dir)
-                          File/separator
-                          (-> (name ns)
-                              (string/replace "-" "_")
-                              (string/replace "." File/separator))) ]
-    (.startsWith (.getPath file) correct-path)))
+        correct-path (when decl
+                           (str (.getPath dir)
+                                File/separator
+                                (-> (name ns)
+                                    (string/replace "-" "_")
+                                    (string/replace "." File/separator)))) ]
+    (when correct-path
+      (.startsWith (.getPath file) correct-path))))
 
 (defn- find-files
   "Finds source files for platform in directory for which the path
@@ -135,7 +137,7 @@
   Optional third argument is map of options:
 
     :platform  Either clj (default) or cljs, both defined in
-               clojure.tools.namespace.find, controls reader options for 
+               clojure.tools.namespace.find, controls reader options for
                parsing files.
 
     :add-all?  If true, assumes all extant files are modified regardless
@@ -164,8 +166,8 @@
 
   Optional third argument is map of options:
 
-    :platform  Either clj (default) or cljs, both defined in 
-               clojure.tools.namespace.find, controls file extensions 
+    :platform  Either clj (default) or cljs, both defined in
+               clojure.tools.namespace.find, controls file extensions
                and reader options.
 
     :add-all?  If true, assumes all extant files are modified regardless
